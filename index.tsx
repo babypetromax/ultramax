@@ -1,6 +1,6 @@
 
 import { GoogleGenAI } from "@google/genai";
-import React, { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, Fragment, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, ArcElement, PointElement, LineElement } from 'chart.js';
 import { Bar, Pie, Line } from 'react-chartjs-2';
@@ -68,6 +68,8 @@ interface ShopSettings {
     promoHeight: number;
     headerText: string;
     footerText: string;
+    interactionMode: 'desktop' | 'touch';
+    isKeyboardNavEnabled: boolean;
 }
 
 interface CashDrawerActivity {
@@ -174,10 +176,24 @@ const App = () => {
         promoHeight: 50,
         headerText: 'ขอบคุณที่ใช้บริการ',
         footerText: 'www.ultramaxtako.com',
+        interactionMode: 'desktop',
+        isKeyboardNavEnabled: false,
     });
     const [theme, setTheme] = useState<'light' | 'dark'>('light');
     const [zoomLevel, setZoomLevel] = useState(16); // Base font-size in pixels
     const [currentDate, setCurrentDate] = useState('');
+
+    // Keyboard Navigation State & Refs
+    const [focusedItem, setFocusedItem] = useState<{ pane: 'categories' | 'menu'; index: number } | null>(null);
+    const categoryItemRefs = useRef(new Map<string, HTMLLIElement>());
+    const menuItemRefs = useRef(new Map<number, HTMLDivElement>());
+    const menuGridRef = useRef<HTMLDivElement>(null);
+    const getCategoryItemRef = (cat: string) => (el: HTMLLIElement | null) => {
+        if (el) categoryItemRefs.current.set(cat, el); else categoryItemRefs.current.delete(cat);
+    };
+    const getMenuItemRef = (id: number) => (el: HTMLDivElement | null) => {
+        if (el) menuItemRefs.current.set(id, el); else menuItemRefs.current.delete(id);
+    };
     
     // HANDLERS
     const logAction = useCallback((action: string) => {
@@ -280,6 +296,22 @@ const App = () => {
         });
     }, [logAction]);
 
+    // DERIVED STATE & MEMOS
+    const navCategories = useMemo(() => ['รายการโปรด', ...categories], [categories]);
+    
+    const filteredMenuItems = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        // When searching, reset keyboard focus
+        if (query !== '') {
+            if (focusedItem?.pane === 'menu') setFocusedItem(null);
+            return menuItems.filter(item => item.name.toLowerCase().includes(query));
+        }
+        if (activeCategory === 'รายการโปรด') {
+            return menuItems.filter(item => favoriteIds.has(item.id));
+        }
+        return menuItems.filter(item => item.category === activeCategory);
+    }, [menuItems, activeCategory, favoriteIds, searchQuery, focusedItem]);
+    
     // --- LOCAL STORAGE PERSISTENCE & APP INITIALIZATION ---
     useEffect(() => {
         document.body.className = theme;
@@ -358,21 +390,157 @@ const App = () => {
     // Handle UI changes
     useEffect(() => { document.body.className = theme; }, [theme]);
     useEffect(() => { document.documentElement.style.fontSize = `${zoomLevel}px`; }, [zoomLevel]);
-
-
-    // DERIVED STATE & MEMOS
-    const navCategories = useMemo(() => ['รายการโปรด', ...categories], [categories]);
     
-    const filteredMenuItems = useMemo(() => {
-        const query = searchQuery.trim().toLowerCase();
-        if (query !== '') {
-            return menuItems.filter(item => item.name.toLowerCase().includes(query));
+    // --- Keyboard Navigation Effects ---
+    useEffect(() => {
+        if (focusedItem?.pane === 'menu' && focusedItem.index >= filteredMenuItems.length) {
+            setFocusedItem({ pane: 'menu', index: Math.max(0, filteredMenuItems.length - 1) });
         }
-        if (activeCategory === 'รายการโปรด') {
-            return menuItems.filter(item => favoriteIds.has(item.id));
+    }, [filteredMenuItems, focusedItem]);
+
+    useEffect(() => {
+        if (!focusedItem || !shopSettings.isKeyboardNavEnabled) return;
+    
+        let element;
+        if (focusedItem.pane === 'categories') {
+            const key = navCategories[focusedItem.index];
+            element = categoryItemRefs.current.get(key);
+        } else if (focusedItem.pane === 'menu') {
+            const key = filteredMenuItems[focusedItem.index]?.id;
+            if (key) {
+                element = menuItemRefs.current.get(key);
+            }
         }
-        return menuItems.filter(item => item.category === activeCategory);
-    }, [menuItems, activeCategory, favoriteIds, searchQuery]);
+    
+        element?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'nearest',
+            inline: 'nearest',
+        });
+    }, [focusedItem, navCategories, filteredMenuItems, shopSettings.isKeyboardNavEnabled]);
+
+    const addToCart = useCallback((item: MenuItem) => {
+        if (isAdminMode) return;
+        setCart(prev => {
+            const existing = prev.find(i => i.id === item.id);
+            if (existing) {
+                return prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i);
+            }
+            return [...prev, { ...item, quantity: 1 }];
+        });
+    }, [isAdminMode]);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Stop if any modal is open, but allow Escape to close them
+            if (showPaymentModal || showReceiptModal || showAdminLoginModal || showMenuItemModal || showStartShiftModal || showEndShiftModal || showPaidInOutModal) {
+                 if (e.key === 'Escape') {
+                    setShowPaymentModal(false);
+                    setShowReceiptModal(false);
+                    setShowAdminLoginModal(false);
+                    setShowMenuItemModal(false);
+                    setShowStartShiftModal(false);
+                    setShowEndShiftModal(false);
+                    setShowPaidInOutModal(false);
+                }
+                return;
+            }
+    
+            const target = e.target as HTMLElement;
+            const isInputFocused = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+            
+            // Let Tab do its default thing.
+            if (e.key === 'Tab') {
+                return;
+            }
+    
+            // Special handling for Escape in search input (works regardless of keyboard nav setting)
+            if (e.key === 'Escape' && isInputFocused && target.classList.contains('menu-search-input')) {
+                setSearchQuery('');
+                (target as HTMLInputElement).blur();
+                e.preventDefault();
+                return;
+            }
+            
+            // If keyboard nav is disabled, stop here.
+            if (!shopSettings.isKeyboardNavEnabled) {
+                return;
+            }
+
+            // Don't interfere with typing in other inputs when keyboard nav is enabled.
+            if (isInputFocused) {
+                return;
+            }
+    
+            // If no pane is actively focused for navigation, do nothing.
+            if (!focusedItem) return;
+            
+            // Only handle specific navigation keys from here.
+            const handledKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'];
+            if (!handledKeys.includes(e.key)) {
+                return;
+            }
+            
+            e.preventDefault();
+    
+            let newIndex = focusedItem.index;
+    
+            if (focusedItem.pane === 'categories') {
+                const total = navCategories.length;
+                if (e.key === 'ArrowDown') newIndex = (newIndex + 1) % total;
+                else if (e.key === 'ArrowUp') newIndex = (newIndex - 1 + total) % total;
+                else if (e.key === 'Enter') {
+                    setActiveCategory(navCategories[newIndex]);
+                    setSearchQuery('');
+                    menuGridRef.current?.focus();
+                } else if (e.key === 'ArrowRight') {
+                    menuGridRef.current?.focus();
+                }
+                setFocusedItem({ ...focusedItem, index: newIndex });
+            } 
+            else if (focusedItem.pane === 'menu') {
+                const total = filteredMenuItems.length;
+                if (total === 0) {
+                    if(e.key === 'ArrowLeft') {
+                        const categoryListEl = categoryItemRefs.current.get(activeCategory)?.parentElement;
+                        if (categoryListEl) {
+                            (categoryListEl as HTMLElement).focus();
+                        }
+                    }
+                    return;
+                }
+    
+                const grid = menuGridRef.current;
+                const numColumns = grid ? Math.max(1, window.getComputedStyle(grid).gridTemplateColumns.split(' ').length) : 1;
+    
+                if (e.key === 'ArrowLeft') {
+                    if (newIndex % numColumns === 0) {
+                         const categoryListEl = categoryItemRefs.current.get(activeCategory)?.parentElement;
+                         if (categoryListEl) {
+                             (categoryListEl as HTMLElement).focus();
+                         }
+                    } else {
+                        newIndex = Math.max(0, newIndex - 1);
+                    }
+                }
+                else if (e.key === 'ArrowRight') newIndex = Math.min(total - 1, newIndex + 1);
+                else if (e.key === 'ArrowDown') newIndex = Math.min(total - 1, newIndex + numColumns);
+                else if (e.key === 'ArrowUp') newIndex = Math.max(0, newIndex - numColumns);
+                else if (e.key === 'Enter') {
+                    const item = filteredMenuItems[newIndex];
+                    if (item) addToCart(item);
+                }
+                setFocusedItem({ ...focusedItem, index: newIndex });
+            }
+        };
+    
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [
+        focusedItem, navCategories, filteredMenuItems, addToCart, activeCategory, searchQuery,
+        showPaymentModal, showReceiptModal, showAdminLoginModal, showMenuItemModal, 
+        showStartShiftModal, showEndShiftModal, showPaidInOutModal, shopSettings.isKeyboardNavEnabled
+    ]);
 
     const cartCalculations = useMemo(() => {
         const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -424,17 +592,7 @@ const App = () => {
     }, [currentShift]);
 
     // --- CORE HANDLERS ---
-    const addToCart = (item: MenuItem) => {
-        if (isAdminMode) return;
-        setCart(prev => {
-            const existing = prev.find(i => i.id === item.id);
-            if (existing) {
-                return prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i);
-            }
-            return [...prev, { ...item, quantity: 1 }];
-        });
-    };
-
+    
     const updateQuantity = (itemId: number, delta: number) => {
         setCart(prev => {
             const item = prev.find(i => i.id === itemId);
@@ -870,31 +1028,43 @@ const App = () => {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="menu-search-input"
+                    onFocus={() => setFocusedItem(null)}
                  />
             </div>
             <h2>หมวดหมู่</h2>
-            <ul className="category-list">
-                {navCategories.map(cat => (
-                    <li key={cat}
-                        className={`category-list-item ${activeCategory === cat && searchQuery.trim() === '' ? 'active' : ''}`}
-                        onClick={() => {
-                            setSearchQuery('');
-                            setActiveCategory(cat);
-                        }}>
-                        <span className={`material-symbols-outlined ${cat === 'รายการโปรด' ? 'favorite-icon' : ''}`}>{
-                            { 
-                                'รายการโปรด': 'star', 'ทาโกะดั้งเดิม': 'ramen_dining', 'ทาโกะเบคอน': 'outdoor_grill', 
-                                'ทาโกะแซลมอน': 'set_meal', 'ทาโกะคอมโบ้': 'restaurant_menu', 'ท็อปปิ้งพิเศษ': 'add_circle',
-                                'เดลิเวอรี่': 'delivery_dining', 'ไอศครีม': 'icecream', 'เครื่องดื่ม': 'local_bar',
-                                'สินค้าพิเศษ': 'shopping_bag'
-                            }[cat] || 'label'
-                        }</span>
-                        <span className="category-name">{cat}</span>
-                        {isAdminMode && cat !== 'รายการโปรด' && (
-                             <button className="delete-category-btn" onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat); }}>&times;</button>
-                        )}
-                    </li>
-                ))}
+            <ul className="category-list"
+                tabIndex={shopSettings.isKeyboardNavEnabled ? 0 : -1}
+                onFocus={() => {
+                    if (shopSettings.isKeyboardNavEnabled && focusedItem?.pane !== 'categories') {
+                        setFocusedItem({ pane: 'categories', index: navCategories.indexOf(activeCategory) ?? 0 });
+                    }
+                }}
+            >
+                {navCategories.map((cat, index) => {
+                    const isFocused = shopSettings.isKeyboardNavEnabled && focusedItem?.pane === 'categories' && focusedItem.index === index;
+                    return (
+                        <li key={cat}
+                            ref={getCategoryItemRef(cat)}
+                            className={`category-list-item ${activeCategory === cat && searchQuery.trim() === '' ? 'active' : ''} ${isFocused ? 'keyboard-focused' : ''}`}
+                            onClick={() => {
+                                setSearchQuery('');
+                                setActiveCategory(cat);
+                            }}>
+                            <span className={`material-symbols-outlined ${cat === 'รายการโปรด' ? 'favorite-icon' : ''}`}>{
+                                { 
+                                    'รายการโปรด': 'star', 'ทาโกะดั้งเดิม': 'ramen_dining', 'ทาโกะเบคอน': 'outdoor_grill', 
+                                    'ทาโกะแซลมอน': 'set_meal', 'ทาโกะคอมโบ้': 'restaurant_menu', 'ท็อปปิ้งพิเศษ': 'add_circle',
+                                    'เดลิเวอรี่': 'delivery_dining', 'ไอศครีม': 'icecream', 'เครื่องดื่ม': 'local_bar',
+                                    'สินค้าพิเศษ': 'shopping_bag'
+                                }[cat] || 'label'
+                            }</span>
+                            <span className="category-name">{cat}</span>
+                            {isAdminMode && cat !== 'รายการโปรด' && (
+                                 <button className="delete-category-btn" onClick={(e) => { e.stopPropagation(); handleDeleteCategory(cat); }}>&times;</button>
+                            )}
+                        </li>
+                    );
+                })}
                 {isAdminMode && (
                     <li className="category-list-item add-category-btn" onClick={handleAddCategory}>
                         <span className="material-symbols-outlined">add_circle</span>
@@ -927,30 +1097,41 @@ const App = () => {
                     <p>กรุณาตรวจสอบการตั้งค่า URL และลองรีเฟรชหน้าจอ</p>
                 </div>
             ) : (
-                <div className="menu-grid">
+                <div className="menu-grid" 
+                    tabIndex={shopSettings.isKeyboardNavEnabled ? 0 : -1}
+                    ref={menuGridRef}
+                    onFocus={() => {
+                        if (shopSettings.isKeyboardNavEnabled && filteredMenuItems.length > 0 && focusedItem?.pane !== 'menu') {
+                            setFocusedItem({ pane: 'menu', index: 0 });
+                        }
+                    }}
+                >
                     {filteredMenuItems.length === 0 && searchQuery.trim() !== '' && <p className="menu-grid-message">ไม่พบสินค้าที่ตรงกับ: "{searchQuery}"</p>}
                     {filteredMenuItems.length === 0 && searchQuery.trim() === '' && activeCategory === 'รายการโปรด' && <p className="menu-grid-message">ยังไม่มีรายการโปรด... กด ⭐️ เพื่อเพิ่ม</p>}
                     {filteredMenuItems.length === 0 && searchQuery.trim() === '' && activeCategory !== 'รายการโปรด' && <p className="menu-grid-message">ไม่มีสินค้าในหมวดหมู่นี้</p>}
-                    {filteredMenuItems.map(item => (
-                        <div key={item.id} className="menu-card">
-                            {isAdminMode && (
-                                <div className="admin-item-controls">
-                                    <button onClick={() => handleDeleteItem(item.id)} title="ลบสินค้า"><span className="material-symbols-outlined">delete</span></button>
-                                    <button onClick={() => handleOpenMenuItemModal(item)} title="แก้ไขสินค้า"><span className="material-symbols-outlined">edit</span></button>
-                                </div>
-                            )}
-                            <button className="menu-card-fav-btn" onClick={() => toggleFavorite(item.id)}>
-                                <span className={`material-symbols-outlined ${favoriteIds.has(item.id) ? 'filled' : ''}`}>star</span>
-                            </button>
-                            <div className="card-content" onClick={() => addToCart(item)}>
-                                <img src={item.image} alt={item.name} loading="lazy" onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop'; }}/>
-                                <div className="menu-card-body">
-                                    <h3 className="menu-card-title">{item.name}</h3>
-                                    <p className="menu-card-price">฿{item.price.toFixed(2)}</p>
+                    {filteredMenuItems.map((item, index) => {
+                        const isFocused = shopSettings.isKeyboardNavEnabled && focusedItem?.pane === 'menu' && focusedItem.index === index;
+                        return (
+                            <div key={item.id} className={`menu-card ${isFocused ? 'keyboard-focused' : ''}`} ref={getMenuItemRef(item.id)}>
+                                {isAdminMode && (
+                                    <div className="admin-item-controls">
+                                        <button onClick={() => handleDeleteItem(item.id)} title="ลบสินค้า"><span className="material-symbols-outlined">delete</span></button>
+                                        <button onClick={() => handleOpenMenuItemModal(item)} title="แก้ไขสินค้า"><span className="material-symbols-outlined">edit</span></button>
+                                    </div>
+                                )}
+                                <button className="menu-card-fav-btn" onClick={() => toggleFavorite(item.id)}>
+                                    <span className={`material-symbols-outlined ${favoriteIds.has(item.id) ? 'filled' : ''}`}>star</span>
+                                </button>
+                                <div className="card-content" onClick={() => addToCart(item)}>
+                                    <img src={item.image} alt={item.name} loading="lazy" onError={(e) => { e.currentTarget.src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&auto=format&fit=crop'; }}/>
+                                    <div className="menu-card-body">
+                                        <h3 className="menu-card-title">{item.name}</h3>
+                                        <p className="menu-card-price">฿{item.price.toFixed(2)}</p>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </section>
@@ -2047,7 +2228,7 @@ const App = () => {
         const tabs: {id: SettingTab, name: string, icon: string}[] = [
           {id: 'general', name: 'ตั้งค่าทั่วไป', icon: 'storefront'},
           {id: 'receipts', name: 'ใบเสร็จ', icon: 'print'},
-          {id: 'features', name: 'ฟีเจอร์', icon: 'toggle_on'},
+          {id: 'features', name: 'โหมด & การใช้งาน', icon: 'toggle_on'},
           {id: 'payments', name: 'ประเภทการชำระเงิน', icon: 'credit_card'},
           {id: 'security', name: 'ผู้ใช้ & ความปลอดภัย', icon: 'lock'},
         ];
@@ -2071,8 +2252,9 @@ const App = () => {
                     </div>
                     {activeTab === 'general' && <GeneralSettings settings={shopSettings} onSettingsChange={setShopSettings} isAdminMode={isAdminMode} />}
                     {activeTab === 'receipts' && <ReceiptSettings settings={shopSettings} onSettingsChange={setShopSettings} isAdminMode={isAdminMode} offlineLogo={offlineReceiptLogo} setOfflineLogo={setOfflineReceiptLogo} offlinePromo={offlineReceiptPromo} setOfflinePromo={setOfflineReceiptPromo} />}
+                    {activeTab === 'features' && <FeatureSettings settings={shopSettings} onSettingsChange={setShopSettings} isAdminMode={isAdminMode} logAction={logAction} />}
                     {activeTab === 'security' && <SecuritySettings currentPassword={adminPassword} onPasswordChange={handlePasswordChange} />}
-                    {['features', 'payments'].includes(activeTab) && (
+                    {['payments'].includes(activeTab) && (
                         <div className="settings-card placeholder">
                             <h3>{tabs.find(t => t.id === activeTab)?.name}</h3>
                             <p>ส่วนนี้ยังอยู่ในระหว่างการพัฒนา</p>
@@ -2119,6 +2301,92 @@ const App = () => {
                         <option value="USD">ดอลลาร์สหรัฐ (USD)</option>
                     </select>
                 </div>
+                {isAdminMode && <button className="action-button" onClick={handleSave}>บันทึกการเปลี่ยนแปลง</button>}
+            </div>
+        );
+    };
+
+    const FeatureSettings = ({ settings, onSettingsChange, isAdminMode, logAction }: { settings: ShopSettings, onSettingsChange: (s: ShopSettings) => void, isAdminMode: boolean, logAction: (action: string) => void }) => {
+        const [localSettings, setLocalSettings] = useState(settings);
+
+        useEffect(() => {
+            if (!isAdminMode) { setLocalSettings(settings); }
+        }, [isAdminMode, settings]);
+        
+        const handleChange = (key: keyof ShopSettings, value: any) => {
+            setLocalSettings(prev => ({ ...prev, [key]: value }));
+        };
+
+        const handleSave = () => {
+            onSettingsChange(localSettings);
+            logAction('บันทึกการตั้งค่าโหมดการใช้งาน');
+            alert('บันทึกการตั้งค่าโหมดการใช้งานแล้ว');
+        };
+
+        return (
+            <div className="settings-card">
+                <h3>โหมดการใช้งานและหน้าจอ</h3>
+                <div className="form-group">
+                    <label>โหมดการป้อนข้อมูลหลัก</label>
+                    <p className="text-secondary" style={{marginBottom: '0.75rem', fontSize: '0.9rem'}}>เลือกโหมดที่เหมาะสมกับอุปกรณ์ของคุณ</p>
+                    <div className="radio-group">
+                        <label className="radio-label">
+                            <input
+                                type="radio"
+                                name="interactionMode"
+                                value="desktop"
+                                checked={localSettings.interactionMode === 'desktop'}
+                                onChange={() => handleChange('interactionMode', 'desktop')}
+                                disabled={!isAdminMode}
+                            />
+                            <span className="radio-custom"></span>
+                            <span>
+                                <strong>เดสก์ท็อป (เมาส์และคีย์บอร์ด)</strong>
+                                <small>เหมาะสำหรับคอมพิวเตอร์ที่มีเมาส์และคีย์บอร์ด</small>
+                            </span>
+                        </label>
+                        <label className="radio-label">
+                            <input
+                                type="radio"
+                                name="interactionMode"
+                                value="touch"
+                                checked={localSettings.interactionMode === 'touch'}
+                                onChange={() => handleChange('interactionMode', 'touch')}
+                                disabled={!isAdminMode}
+                            />
+                             <span className="radio-custom"></span>
+                             <span>
+                                <strong>หน้าจอสัมผัส (แท็บเล็ต/มือถือ)</strong>
+                                <small>ปรับปุ่มและระยะห่างให้ใหญ่ขึ้นเพื่อการสัมผัส</small>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+
+                <div className="form-group">
+                    <label>การนำทางด้วยคีย์บอร์ด</label>
+                     <p className="text-secondary" style={{marginBottom: '0.75rem', fontSize: '0.9rem'}}>เปิดเพื่อแสดงไฮไลท์และใช้งานคีย์บอร์ดเพื่อเลือกเมนู (เหมาะสำหรับโหมดเดสก์ท็อป)</p>
+                    <div className="vat-toggle">
+                        <span>ปิด/เปิดใช้งานไฮไลท์</span>
+                        <label className="switch">
+                            <input
+                                type="checkbox"
+                                checked={localSettings.isKeyboardNavEnabled}
+                                onChange={(e) => handleChange('isKeyboardNavEnabled', e.target.checked)}
+                                disabled={!isAdminMode}
+                            />
+                            <span className="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                 <div className="form-group">
+                    <label>การปรับหน้าจอ (Responsive)</label>
+                    <p className="text-secondary" style={{fontSize: '0.9rem'}}>
+                        แอปพลิเคชันถูกออกแบบมาให้ปรับขนาดตามความกว้างของหน้าจอโดยอัตโนมัติ (Smart Display) เพื่อให้แสดงผลได้ดีที่สุดทั้งในโหมดแนวนอน (แนะนำ) และแนวตั้งบนอุปกรณ์ต่างๆ
+                    </p>
+                </div>
+
                 {isAdminMode && <button className="action-button" onClick={handleSave}>บันทึกการเปลี่ยนแปลง</button>}
             </div>
         );
@@ -2344,7 +2612,7 @@ const App = () => {
 
 
     return (
-        <div className="app-container">
+        <div className={`app-container ${shopSettings.interactionMode === 'touch' ? 'touch-mode' : ''}`}>
             <TopNav />
             {view === 'pos' && (
                 <main className="pos-view">
