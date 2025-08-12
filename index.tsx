@@ -1084,7 +1084,7 @@ const App = () => {
                     <div className="receipt-preview">
                         <div id="printable-receipt" className={`receipt-paper receipt-${receiptWidth}`}>
                             <div className="receipt-header-content">
-                                <img src={shopInfo.logo} alt="Shop Logo" className="receipt-logo" style={{ width: '200px', maxWidth: '200px', height: 'auto' }}/>
+                                <img src={shopInfo.logo} alt="Shop Logo" className="receipt-logo" style={{ width: '200px', maxWidth: '200px', height: '200px' }}/>
                                 <p><strong>{shopSettings.shopName}</strong></p>
                                 <p>{shopSettings.address}</p>
                                 <p>ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ</p>
