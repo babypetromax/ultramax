@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import React, { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -60,7 +61,11 @@ interface ShopSettings {
     shopName: string;
     address: string;
     logoUrl: string;
+    logoWidth: number;
+    logoHeight: number;
     promoUrl: string;
+    promoWidth: number;
+    promoHeight: number;
     headerText: string;
     footerText: string;
 }
@@ -153,12 +158,20 @@ const App = () => {
     const [showEndShiftModal, setShowEndShiftModal] = useState(false);
     const [showPaidInOutModal, setShowPaidInOutModal] = useState(false);
 
+    // Offline receipt images state
+    const [offlineReceiptLogo, setOfflineReceiptLogo] = useState<string | null>(null);
+    const [offlineReceiptPromo, setOfflineReceiptPromo] = useState<string | null>(null);
+
     // Shop & UI State
     const [shopSettings, setShopSettings] = useState<ShopSettings>({
         shopName: "Ultra Max Takoyaki",
         address: "123 ถนนสุขุมวิท, กรุงเทพมหานคร 10110",
-        logoUrl: 'https://images.unsplash.com/photo-1595854341625-f33ee135d992?w=250&h=250&auto=format&fit=crop&q=60',
+        logoUrl: 'https://images.unsplash.com/photo-1595854341625-f33ee135d992?w=80&h=80&auto=format&fit=crop&q=60',
+        logoWidth: 80,
+        logoHeight: 80,
         promoUrl: 'https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExaDBka3k3bmNkc3k2c2J5dzV0bjg0d3F0dzQ3d2ZkNXI2OGU2aHh2aiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/ARp1qG127zY2I/giphy.gif',
+        promoWidth: 200,
+        promoHeight: 50,
         headerText: 'ขอบคุณที่ใช้บริการ',
         footerText: 'www.ultramaxtako.com',
     });
@@ -297,6 +310,12 @@ const App = () => {
             if(savedShiftHistoryJSON) {
                 setShiftHistory(JSON.parse(savedShiftHistoryJSON).map((s: Shift) => ({...s, startTime: new Date(s.startTime), endTime: s.endTime ? new Date(s.endTime) : undefined, activities: s.activities.map((a: CashDrawerActivity) => ({...a, timestamp: new Date(a.timestamp)}))})));
             }
+            // Offline receipt images
+            const savedOfflineLogo = localStorage.getItem('takoyaki_pos_offline_logo');
+            if (savedOfflineLogo) setOfflineReceiptLogo(savedOfflineLogo);
+            
+            const savedOfflinePromo = localStorage.getItem('takoyaki_pos_offline_promo');
+            if (savedOfflinePromo) setOfflineReceiptPromo(savedOfflinePromo);
 
 
             logAction("แอปพลิเคชันเริ่มต้นและโหลดข้อมูลจากหน่วยความจำสำเร็จ");
@@ -1026,13 +1045,13 @@ const App = () => {
         );
     };
 
-    const ReceiptModal = ({ show, onClose, orderData }: { show: boolean, onClose: () => void, orderData: (Order & { cashReceived?: number }) | null }) => {
+    const ReceiptModal = ({ show, onClose, orderData, shopSettings, offlineLogo, offlinePromo }: { show: boolean, onClose: () => void, orderData: (Order & { cashReceived?: number }) | null, shopSettings: ShopSettings, offlineLogo: string | null, offlinePromo: string | null }) => {
         const [receiptWidth, setReceiptWidth] = useState<'58mm' | '80mm'>('58mm');
         const [autoPrint, setAutoPrint] = useState(true);
     
         const handlePrint = () => {
             // Temporarily set a class on body to activate print styles for the receipt
-            document.body.classList.add(`printing-receipt-${receiptWidth}`);
+             document.body.classList.add(`printing-receipt-${receiptWidth}`);
             window.print();
             // Clean up the class after printing
             document.body.classList.remove(`printing-receipt-${receiptWidth}`);
@@ -1048,12 +1067,6 @@ const App = () => {
         if (!show || !orderData) return null;
     
         const change = orderData.cashReceived ? orderData.cashReceived - orderData.total : 0;
-        const shopInfo = {
-            name: shopSettings.shopName,
-            address: shopSettings.address,
-            logo: shopSettings.logoUrl,
-            promo: shopSettings.promoUrl
-        };
     
         return (
             <div className="modal-overlay receipt-modal-overlay" onClick={onClose}>
@@ -1084,7 +1097,17 @@ const App = () => {
                     <div className="receipt-preview">
                         <div id="printable-receipt" className={`receipt-paper receipt-${receiptWidth}`}>
                             <div className="receipt-header-content">
-                                <img src={shopInfo.logo} alt="Shop Logo" className="receipt-logo" style={{ width: '200px', maxWidth: '200px', height: '200px' }}/>
+                                <img
+                                    src={offlineLogo || shopSettings.logoUrl}
+                                    alt="Shop Logo"
+                                    className="receipt-logo"
+                                    style={{
+                                        width: `${shopSettings.logoWidth}px`,
+                                        height: `${shopSettings.logoHeight}px`,
+                                        objectFit: 'contain',
+                                        margin: '4px auto'
+                                    }}
+                                />
                                 <p><strong>{shopSettings.shopName}</strong></p>
                                 <p>{shopSettings.address}</p>
                                 <p>ใบเสร็จรับเงิน/ใบกำกับภาษีอย่างย่อ</p>
@@ -1133,7 +1156,17 @@ const App = () => {
                             <hr className="receipt-hr" />
                             <div className="receipt-footer">
                                 <p>{shopSettings.headerText}</p>
-                                <img src={shopInfo.promo} alt="Promo" className="receipt-promo"/>
+                                <img
+                                    src={offlinePromo || shopSettings.promoUrl}
+                                    alt="Promo"
+                                    className="receipt-promo"
+                                    style={{
+                                        width: `${shopSettings.promoWidth}px`,
+                                        height: `${shopSettings.promoHeight}px`,
+                                        objectFit: 'contain',
+                                        margin: '4px auto'
+                                    }}
+                                />
                                 <p>{shopSettings.footerText}</p>
                             </div>
                         </div>
@@ -2037,7 +2070,7 @@ const App = () => {
                         <h1>{tabs.find(t => t.id === activeTab)?.name}</h1>
                     </div>
                     {activeTab === 'general' && <GeneralSettings settings={shopSettings} onSettingsChange={setShopSettings} isAdminMode={isAdminMode} />}
-                    {activeTab === 'receipts' && <ReceiptSettings settings={shopSettings} onSettingsChange={setShopSettings} isAdminMode={isAdminMode} />}
+                    {activeTab === 'receipts' && <ReceiptSettings settings={shopSettings} onSettingsChange={setShopSettings} isAdminMode={isAdminMode} offlineLogo={offlineReceiptLogo} setOfflineLogo={setOfflineReceiptLogo} offlinePromo={offlineReceiptPromo} setOfflinePromo={setOfflineReceiptPromo} />}
                     {activeTab === 'security' && <SecuritySettings currentPassword={adminPassword} onPasswordChange={handlePasswordChange} />}
                     {['features', 'payments'].includes(activeTab) && (
                         <div className="settings-card placeholder">
@@ -2091,23 +2124,64 @@ const App = () => {
         );
     };
 
-    const ReceiptSettings = ({ settings, onSettingsChange, isAdminMode }: { settings: ShopSettings, onSettingsChange: (s: ShopSettings) => void, isAdminMode: boolean }) => {
+    const UploadIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" style={{width: '1.25rem', height: '1.25rem', marginRight: '0.5rem'}} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+        </svg>
+    );
+    
+    const ReceiptSettings = ({ settings, onSettingsChange, isAdminMode, offlineLogo, setOfflineLogo, offlinePromo, setOfflinePromo }: { 
+        settings: ShopSettings, 
+        onSettingsChange: (s: ShopSettings) => void, 
+        isAdminMode: boolean,
+        offlineLogo: string | null, 
+        setOfflineLogo: (d: string | null) => void, 
+        offlinePromo: string | null, 
+        setOfflinePromo: (d: string | null) => void 
+    }) => {
         const [localSettings, setLocalSettings] = useState(settings);
-
+    
         useEffect(() => {
             if (!isAdminMode) { setLocalSettings(settings); }
         }, [isAdminMode, settings]);
-
+    
         const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
             const { id, value } = e.target;
-            setLocalSettings(prev => ({ ...prev, [id]: value }));
+            const target = e.target as HTMLInputElement;
+            setLocalSettings(prev => ({ 
+                ...prev, 
+                [id]: target.type === 'number' ? Number(value) || 0 : value 
+            }));
         };
         
         const handleSave = () => {
             onSettingsChange(localSettings);
+            logAction('บันทึกการตั้งค่าใบเสร็จ');
             alert('บันทึกการตั้งค่าใบเสร็จแล้ว');
         };
-
+    
+        const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, stateSetter: (d: string | null) => void, storageKey: string) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+    
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const dataUrl = reader.result as string;
+                stateSetter(dataUrl);
+                localStorage.setItem(storageKey, dataUrl);
+                alert(`อัปโหลดและบันทึกรูปสำหรับ "${storageKey}" เรียบร้อยแล้ว!`);
+            };
+            reader.readAsDataURL(file);
+        };
+    
+        const handleImageDelete = (stateSetter: (d: string | null) => void, storageKey: string) => {
+            if (window.confirm(`คุณต้องการลบรูปภาพออฟไลน์สำหรับ "${storageKey}" หรือไม่?`)) {
+                stateSetter(null);
+                localStorage.removeItem(storageKey);
+                alert(`ลบรูปภาพ "${storageKey}" เรียบร้อยแล้ว`);
+            }
+        };
+    
         return (
             <div className="settings-card">
                 <h3>การตั้งค่าเครื่องพิมพ์</h3>
@@ -2126,15 +2200,42 @@ const App = () => {
                         <label className="switch"><input type="checkbox" defaultChecked disabled={!isAdminMode} /><span className="slider"></span></label>
                     </div>
                 </div>
-                <h3>รูปแบบใบเสร็จ</h3>
+    
+                <div style={{borderTop: '1px solid var(--border-color)', margin: '2rem 0'}}></div>
+    
+                <h3>รูปแบบใบเสร็จ (ออนไลน์)</h3>
+                <p className="text-secondary" style={{marginBottom: '1rem', fontSize: '0.9rem'}}>ใช้รูปภาพจาก URL ภายนอก (ต้องใช้อินเทอร์เน็ต)</p>
+                
                 <div className="form-group">
                     <label htmlFor="logoUrl">URL โลโก้</label>
                     <input type="text" id="logoUrl" value={localSettings.logoUrl} onChange={handleChange} disabled={!isAdminMode} placeholder="https://example.com/logo.png" />
                 </div>
+                <div className="form-group" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div>
+                        <label htmlFor="logoWidth">ความกว้างโลโก้ (px)</label>
+                        <input type="number" id="logoWidth" value={localSettings.logoWidth} onChange={handleChange} disabled={!isAdminMode} />
+                    </div>
+                    <div>
+                        <label htmlFor="logoHeight">ความสูงโลโก้ (px)</label>
+                        <input type="number" id="logoHeight" value={localSettings.logoHeight} onChange={handleChange} disabled={!isAdminMode} />
+                    </div>
+                </div>
+    
                 <div className="form-group">
                     <label htmlFor="promoUrl">URL รูปภาพท้ายใบเสร็จ</label>
                     <input type="text" id="promoUrl" value={localSettings.promoUrl} onChange={handleChange} disabled={!isAdminMode} placeholder="https://example.com/promo.gif" />
                 </div>
+                 <div className="form-group" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div>
+                        <label htmlFor="promoWidth">ความกว้างรูปท้ายใบเสร็จ (px)</label>
+                        <input type="number" id="promoWidth" value={localSettings.promoWidth} onChange={handleChange} disabled={!isAdminMode} />
+                    </div>
+                    <div>
+                        <label htmlFor="promoHeight">ความสูงรูปท้ายใบเสร็จ (px)</label>
+                        <input type="number" id="promoHeight" value={localSettings.promoHeight} onChange={handleChange} disabled={!isAdminMode} />
+                    </div>
+                </div>
+                
                 <div className="form-group">
                     <label htmlFor="headerText">ข้อความส่วนหัว</label>
                     <textarea id="headerText" rows={2} value={localSettings.headerText} onChange={handleChange} disabled={!isAdminMode}></textarea>
@@ -2143,7 +2244,49 @@ const App = () => {
                     <label htmlFor="footerText">ข้อความส่วนท้าย</label>
                     <textarea id="footerText" rows={2} value={localSettings.footerText} onChange={handleChange} disabled={!isAdminMode}></textarea>
                 </div>
-                {isAdminMode && <button className="action-button" onClick={handleSave}>บันทึกการเปลี่ยนแปลง</button>}
+    
+                <div style={{borderTop: '1px solid var(--border-color)', margin: '2rem 0'}}></div>
+    
+                <h3>รูปแบบใบเสร็จ (ออฟไลน์)</h3>
+                <p className="text-secondary" style={{marginBottom: '1rem', fontSize: '0.9rem'}}>อัปโหลดรูปจากเครื่องเพื่อใช้งานโดยไม่ต้องต่ออินเทอร์เน็ต รูปที่อัปโหลดจะถูกใช้ก่อน URL ออนไลน์</p>
+    
+                <div className="form-group">
+                    <label>โลโก้ (ออฟไลน์)</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <label className="action-button" style={{cursor: isAdminMode ? 'pointer' : 'not-allowed', opacity: isAdminMode ? 1 : 0.6}}>
+                            <UploadIcon />
+                            <span>เลือกไฟล์</span>
+                            <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, setOfflineLogo, 'takoyaki_pos_offline_logo')} disabled={!isAdminMode}/>
+                        </label>
+                        {offlineLogo && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <img src={offlineLogo} alt="Preview" style={{ height: '40px', width: 'auto', background: 'white', padding: '2px', borderRadius: '4px', border: '1px solid var(--border-color)' }} />
+                                <span style={{ color: 'var(--success-color)', fontSize: '0.875rem' }}>มีรูปที่บันทึกไว้</span>
+                                {isAdminMode && <button type="button" onClick={() => handleImageDelete(setOfflineLogo, 'takoyaki_pos_offline_logo')} style={{color: 'var(--danger-color)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', textDecoration: 'underline'}}>ลบ</button>}
+                            </div>
+                        )}
+                    </div>
+                </div>
+                
+                <div className="form-group">
+                    <label>รูปภาพท้ายใบเสร็จ (ออฟไลน์)</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                         <label className="action-button" style={{cursor: isAdminMode ? 'pointer' : 'not-allowed', opacity: isAdminMode ? 1 : 0.6}}>
+                            <UploadIcon />
+                            <span>เลือกไฟล์</span>
+                            <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, setOfflinePromo, 'takoyaki_pos_offline_promo')} disabled={!isAdminMode} />
+                        </label>
+                        {offlinePromo && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <img src={offlinePromo} alt="Preview" style={{ height: '40px', width: 'auto', background: 'white', padding: '2px', borderRadius: '4px', border: '1px solid var(--border-color)' }} />
+                                <span style={{ color: 'var(--success-color)', fontSize: '0.875rem' }}>มีรูปที่บันทึกไว้</span>
+                                {isAdminMode && <button type="button" onClick={() => handleImageDelete(setOfflinePromo, 'takoyaki_pos_offline_promo')} style={{color: 'var(--danger-color)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', textDecoration: 'underline'}}>ลบ</button>}
+                            </div>
+                        )}
+                    </div>
+                </div>
+    
+                {isAdminMode && <button className="action-button" onClick={handleSave}>บันทึกการเปลี่ยนแปลงทั้งหมด</button>}
             </div>
         );
     };
@@ -2225,7 +2368,7 @@ const App = () => {
             {view === 'settings' && <SettingsScreen />}
             
             {showPaymentModal && <PaymentModal />}
-            {showReceiptModal && <ReceiptModal show={showReceiptModal} onClose={() => setShowReceiptModal(false)} orderData={receiptData} />}
+            {showReceiptModal && <ReceiptModal show={showReceiptModal} onClose={() => setShowReceiptModal(false)} orderData={receiptData} shopSettings={shopSettings} offlineLogo={offlineReceiptLogo} offlinePromo={offlineReceiptPromo} />}
             <AdminLoginModal show={showAdminLoginModal} onClose={() => setShowAdminLoginModal(false)} onLogin={handleAdminLogin} />
             <MenuItemModal show={showMenuItemModal} onClose={() => setShowMenuItemModal(false)} onSave={handleSaveMenuItem} item={editingItem} categories={categories} />
             {showStartShiftModal && <StartShiftModal />}
