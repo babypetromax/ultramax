@@ -1517,12 +1517,15 @@ body.dark .kds-completed-table tr.reversal-bill td {
 
 /* --- PRINTING STYLES --- */
 @media print {
-    /* Hide everything by default */
-    body > *:not(#printable-receipt) {
-        display: none !important;
+    /* Hide everything by default using visibility. This is better than display:none for this purpose
+       because it doesn't remove the element from the layout, which allows us to make a child visible again. */
+    body * {
+        visibility: hidden;
     }
-    .modal-overlay, .app-container {
-        display: none !important;
+
+    /* Make the receipt container and everything inside it visible again */
+    #printable-receipt, #printable-receipt * {
+        visibility: visible;
     }
 
     @page {
@@ -1533,6 +1536,7 @@ body.dark .kds-completed-table tr.reversal-bill td {
         background-color: #fff !important;
     }
     
+    /* The JS adds a class to the body, allowing us to set the correct paper width */
     body.printing-receipt-58mm #printable-receipt {
         width: 58mm;
     }
@@ -1541,25 +1545,29 @@ body.dark .kds-completed-table tr.reversal-bill td {
         width: 80mm;
     }
 
-    /* Make only the receipt visible and format it for printing */
+    /* Position the receipt at the top-left corner of the page for printing */
     #printable-receipt {
-        display: block !important;
-        visibility: visible !important;
         position: absolute;
         left: 0;
         top: 0;
         margin: 0;
         padding: 0;
-        width: 100%;
+        width: 100%; /* Default width, overridden by 58/80mm classes */
         box-shadow: none;
         font-size: 9pt; /* Standard print size */
-        color: #000 !important;
         -webkit-print-color-adjust: exact;
         color-adjust: exact;
     }
 
+    /* Ensure all text within the receipt is black, as it's defined on .receipt-paper */
+    #printable-receipt, #printable-receipt * {
+        color: #000 !important;
+    }
+    
     .receipt-paper {
         padding: 0 !important;
+        box-shadow: none !important;
+        border: none !important;
     }
 
     .receipt-logo, .receipt-promo {
